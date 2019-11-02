@@ -7,10 +7,6 @@ output:
   pdf: default
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-```
-
 ## Tree-Based Methods 
 
 Decision tree is a type of supervised learning algorithm that can be used in both regression and classification problems. Tree-based methods works for both categorical and continuous input and output variables.
@@ -22,7 +18,13 @@ library(tree)
 library(randomForest)
 library(MASS)
 library(gbm)
-
+library(rpart)
+library(rpart.plot)
+library(partykit)
+library(grid)
+library(libcoin)
+library(caret)
+library(pROC)
 ```
 ## The Carseats Dataset 
 
@@ -194,9 +196,189 @@ abline(h = min(test.err), col = "red")
 
 ## Homework
 
-1. Attempt a regression tree-based method (not covered in this tutorial) on a reasonable dataset of your choice. Explain the results. 
+1. Attempt a regression tree-based method (not covered in this tutorial) on a reasonable dataset of your choice. Explain the results.
+
+```{r}
+
+# Regression Tree (Conditional Inference method)
+
+# Conditional Inference Trees use a significance test procedure to select variables at each split. This overcomes a variable selection bias in the algorithms used in the traditional CART-based trees. Traditional approaches tend to select variables that have many possible splits or many missing values.
+
+# set seed to make results reproducible 
+set.seed(29)
+
+# split data into train and test subset (300 and 206 respectively)
+train = sample(1:nrow(boston), 300)
+
+# MODEL
+
+# fit train subset of data to model 
+ctree.fit <- ctree(medv ~ ., 
+                   data = boston,
+                   subset = train,
+                   control = ctree_control(maxdepth = Inf)) 
+# 'maxdepth = Inf' means no restrictions are applied to tree size
+
+# EVALUATION OF MODEL
+
+# display the details of the tree
+print(ctree.fit) 
+
+# plot decision tree
+plot(ctree.fit,
+     main = "Regression CTree for Median Home Value") 
+
+# Use model on test set, predict medv 
+ctree.pred = predict(ctree.fit, boston[-train,])
+
+# R-squared evaluation of predictions
+cor(ctree.pred,boston[-train,]$medv)^2 
+
+# The R-squared value of 0.76 is reasonable. The Conditional Inference approach ensures that the right-sized tree is grown without additional post-pruning or cross-validation. However, the depth of the tree is rather large, which makes interpretation more difficult than with less deep trees. In this case, pruning is undertaken for simplicity of plotting and interpretation, notwithstanding the primary role of pruning is to avoid overfitting the data.
+
+# PRUNING
+
+# Pruning can be easily done in this case by regrowing with a different control parameter.
+
+# regrow the tree with smaller depth: maxdepth = 3
+pruned.ctree.fit<- ctree(medv ~ ., 
+                         data = boston,
+                         subset = train,
+                         control = ctree_control(maxdepth = 3))
+
+# examine pruned tree
+print(pruned.ctree.fit) 
+
+# plot pruned tree
+plot(pruned.ctree.fit,
+     main = "Pruned Regression CTree for Median Home Value")
+
+# Use pruned model on test set, predict medv 
+pruned.ctree.pred = predict(pruned.ctree.fit, boston[-train,])
+
+# R-squared evaluation of pruned model predictions
+cor(pruned.ctree.pred,boston[-train,]$medv)^2 
+
+# The R-squared value has dropped to 0.70. The pruned tree provides an easier set of rules, at the expense of a relatively small decrease in prediction accuracy. Importantly, it also should be more generalisable to other data. 
+
+```
+
 
 2. Attempt both a bagging and boosting method on a reasonable dataset of your choice. Explain the results.
 
+```{r}
+
+# BAGGING
+
+data("Carseats")
+carseats = Carseats
+
+# convert quantitative variable Sales into a binary response 
+High = ifelse(carseats$Sales<=8, "No", "Yes")
+carseats = data.frame(carseats, High)
+
+# set seed to make results reproducible 
+set.seed(29)
+
+# set up k-fold cross validation 
+cvcontrol <- trainControl(method = "repeatedcv", 
+                          number = 10,
+                          allowParallel = TRUE)
+
+# split data into train and test subset (250 and 150 respectively)
+train = sample(1:nrow(carseats), 250)
+
+# Fit train subset of data to model 
+bagg.carseats = train(High~.-Sales, 
+                      carseats, 
+                      subset = train,
+                      method = "treebag",
+                      trControl = cvcontrol)
+
+bagg.carseats 
+
+# Use model on test set, predict class labels
+bagg.pred = predict(bagg.carseats, 
+                    carseats[-train,], 
+                    type= "raw")
+
+# Evaluation of bagging predictions
+
+# confusion matrix
+confusionMatrix(carseats[-train,]$High,bagg.pred) 
+# accuracy 0.8
+
+# ROC 
+
+# 4 steps
+
+# obtain predicted probabilites for test data
+bagg.probs=predict(bagg.carseats,
+                   carseats[-train,],
+                   type = "prob")
+
+# calculate ROC
+ROC.bagg <- roc(carseats[-train,]$High,bagg.probs[,"Yes"])
+
+# plot ROC
+plot(ROC.bagg,col=c(6))
+
+# calculate AOC 
+auc(ROC.bagg) 
+# 0.8823
+
+# Evaluation shows reasonable model performance on test data, but room for improvement.
+
+# BOOSTING
+
+# set seed to make results reproducible 
+set.seed(29)
+
+# Fit train subset of data to model 
+boost.carseats = train(High~.-Sales, 
+                       carseats, 
+                       subset = train,
+                       method = "gbm", # gradient boosting
+                       verbose = F,
+                       trControl = cvcontrol)
+
+boost.carseats
+
+# Use model on test set, predict class labels
+boost.pred = predict(boost.carseats, 
+                     carseats[-train,], 
+                     type = "raw")
+
+# Evaluation of boosting predictions
+
+# confusion matrix
+confusionMatrix(carseats[-train,]$High,boost.pred) 
+# accuracy 0.86
+
+# ROC 
+
+# obtain predicted probabilites for test data
+boost.probs=predict(boost.carseats,
+                    carseats[-train,],
+                    type = "prob")
+
+# calculate ROC
+ROC.boost <- roc(carseats[-train,]$High,boost.probs[,"Yes"])
+
+# plot ROC
+plot(ROC.boost,col=c(3))
+
+# calculate AOC 
+auc(ROC.boost) 
+# 0.9225
+
+# Graphical comparison of bagging and boosting performances
+
+plot(ROC.bagg,col=c(6)) # magenta-coloured curve
+plot(ROC.boost, add = TRUE, col=c(3)) # green-coloured curve
+
+# For this dataset, gradient boosting has outperformed bagging.
+
+```
 
 
